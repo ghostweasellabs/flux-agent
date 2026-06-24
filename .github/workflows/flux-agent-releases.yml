@@ -68,7 +68,7 @@ jobs:
   publish:
     needs: release
     runs-on: ubuntu-latest
-    if: startsWith(env.RELEASE_TAG, 'v')
+    if: ${{ (github.event_name == 'workflow_dispatch' && startsWith(github.event.inputs.tag, 'v')) || (github.event_name == 'push' && startsWith(github.ref_name, 'v')) }}
     steps:
       - uses: actions/download-artifact@v4
         with:
