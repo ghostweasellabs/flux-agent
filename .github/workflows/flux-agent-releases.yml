@@ -1,0 +1,85 @@
+name: flux-agent releases
+
+# Canonical release workflow for the public ghostweasellabs/flux-agent repository.
+# Checks out the flux monorepo source and publishes binaries to THIS repo's Releases.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.2.0)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag != '' && inputs.tag || github.ref_name }}
+  FLUX_SOURCE_REPO: ${{ vars.FLUX_SOURCE_REPO || 'ghostweasellabs/flux' }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.FLUX_SOURCE_REPO }}
+          token: ${{ secrets.FLUX_SOURCE_CHECKOUT_TOKEN }}
+          path: flux-src
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Build flux-agent
+        working-directory: flux-src
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          VERSION="${{ env.RELEASE_TAG }}"
+          if [[ "$VERSION" != v* ]]; then VERSION="dev"; fi
+          out="flux-agent-${GOOS}-${GOARCH}"
+          go build -ldflags "-s -w -X github.com/ghostweasellabs/flux/internal/version.Version=${VERSION}" \
+            -o "../dist/${out}" ./cmd/flux-agent
+          (cd ../dist && shasum -a 256 "${out}" > "${out}.sha256")
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flux-agent-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(env.RELEASE_TAG, 'v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub Release (flux-agent repo)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          generate_release_notes: true
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
